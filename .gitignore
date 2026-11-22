@@ -1,0 +1,7 @@
+/tuirim
+tuirim.dist
+tuirim.build
+.venv
+.ruff_cache
+__pycache__
+report.xml

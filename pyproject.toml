@@ -1,0 +1,115 @@
+[project]
+name = "tuirim"
+version = "0.1.0"
+description = "Trim a video in the terminal. Requires ffmpeg!"
+readme = "README.md"
+authors = [
+    { name = "NSPC911", email = "87571998+NSPC911@users.noreply.github.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "textual>=8.2.8",
+    "textual-drivers>=0.10.3",
+    "textual-image>=0.14.4",
+]
+
+[project.scripts]
+tuirim = "tuirim:main"
+
+[build-system]
+requires = ["uv_build>=0.13.9,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+build = [
+    "nuitka>=4.3.5",
+    "poethepoet>=0.49.0",
+]
+dev = [
+    "nuitka>=4.3.5",
+    "poethepoet>=0.49.0",
+    "ruff>=0.17.6",
+    "textual-dev>=1.8.0",
+    "ty==0.0.80",
+]
+
+[tool.poe.tasks]
+run.help = "Run tuirim"
+run.cmd = "tuirim"
+run.use_exec = true
+dev.help = "Run tuirim in development mode with textual-dev"
+dev.cmd = "textual run --dev tuirim.main:main --"
+dev.use_exec = true
+
+check.help = "Run all checks (type checking and linting)"
+check.sequence = [ { cmd = "ty check" }, { cmd = "ruff check" } ]
+
+fmt.help = ""
+fmt.ref = "format"
+format.help = "Run ruff related formatters"
+format.sequence = [ { cmd = "ruff check --unsafe-fixes --fix"}, { cmd = "ruff format"} ]
+
+[tool.poe.tasks.build]
+help = "Build rovr into an executable using Nuitka"
+sequence = [
+  { cmd = "uv sync --group build --no-dev" },  # no dev because for some reason, stuff gets included
+  { cmd = 'nuitka --lto=${lto} --mode=${mode} --report=${report} --user-plugin=scripts/nuitka-bytecode.py src/tuirim --onefile-tempdir-spec="{TEMP}/tuirim_onefile_0.1.0" $POE_EXTRA_ARGS' },
+]
+args = [
+  { name = "mode", help = "Build mode: onefile (default) or standalone", default = "onefile", positional = true, choices = ["standalone", "onefile"] },
+  { name = "lto", help = "Enable LTO (doesn't work with zig)", default = "yes", choices = ["yes", "no"], options = ["--lto"] },
+  { name = "report", help = "Where to output the Nuitka report", default = "report.xml", options = ["--report"] },
+]
+
+
+[tool.ruff]
+force-exclude = true
+exclude = []
+line-length = 90
+
+[tool.ruff.lint]
+select = [
+  "ASYNC220",
+  "ASYNC221",
+  "ASYNC251",
+  "ANN",
+  "B019",
+  "COM819",
+  "C400",
+  "DOC",
+  "D404",
+  "E",
+  "F",
+  "I",
+  "N801", "N802", "N805",
+  "PLE1142",
+  "Q",
+  "SIM",
+  "TD",
+  "W",
+]
+ignore = [
+  "ANN002",
+  "ANN003",
+  "ANN401",
+  "E501",
+  "E731",
+  "TD002",
+  "TD003",
+  "W505",
+]
+preview = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+preview = true
+
+[tool.ty.rules]
+unresolved-reference = "ignore" # handled by ruff
+unresolved-attribute = "ignore"
+no-matching-overload = "ignore" # not that accurate
+# possibly-missing-attribute = "ignore" # no it is not missing
+invalid-assignment = "warn" # probably already but warn for future
+unused-ignore-comment = "ignore"
