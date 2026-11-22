@@ -4,14 +4,13 @@ import subprocess
 from bisect import bisect_right, insort
 from collections.abc import Callable
 from fractions import Fraction
-from io import BytesIO
 from itertools import pairwise
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from time import monotonic
 from typing import cast
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 from rich.text import Text
 from textual import events, work
 from textual.app import ComposeResult
@@ -162,8 +161,7 @@ class ExportProgress(ModalScreen):
         if not isinstance(image, Image.Image):
             return
         self.query_one(Container).mount(
-            Container(TImage(image.copy(), id="preview"), id="viewport"),
-            before=0
+            Container(TImage(image.copy(), id="preview"), id="viewport"), before=0
         )
         self.query_one(Rule).styles.color = self.app.theme_variables["accent"]
 
@@ -351,7 +349,6 @@ class App(DrivenApp):
 
     @work(exclusive=True, group="preview")
     async def render_preview(self) -> None:
-        anchor = monotonic() - self.frame_time(self.frame)
         try:
             while True:
                 if self.playing and self.section(self.frame) in self.ignored:
@@ -366,9 +363,16 @@ class App(DrivenApp):
                     if following is None:
                         break
                     self.frame = following
-                    anchor = monotonic() - self.frame_time(following)
-                self.update_status()
-                data = await run_media(
+                first = self.frame
+                end = (
+                    next(
+                        (i for i in self.cuts if i > first and i in self.ignored),
+                        self.frame_count,
+                    )
+                    if self.playing
+                    else first + 1
+                )
+                proc = await asyncio.create_subprocess_exec(
                     "ffmpeg",
                     "-nostdin",
                     "-v",
@@ -380,34 +384,49 @@ class App(DrivenApp):
                     "-map",
                     "0:v:0",
                     "-frames:v",
-                    "1",
+                    str(end - first),
                     "-vf",
                     "scale=640:360:force_original_aspect_ratio=decrease",
                     "-f",
                     "image2pipe",
                     "-c:v",
-                    "png",
+                    "ppm",
+                    "-fps_mode",
+                    "passthrough",
                     "-",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
                 )
-                self.preview.image = Image.open(BytesIO(data)).copy()
-                if not self.playing:
-                    return
-                await asyncio.sleep(
-                    max(
-                        0.01,
-                        self.frame_time(self.frame + 1) + anchor - monotonic(),
-                    )
-                )
-                elapsed = monotonic() - anchor
-                if elapsed >= self.duration:
+                try:
+                    stream = proc.stdout
+                    assert stream is not None
+                    for frame in range(first, end):
+                        header = await stream.readline()
+                        if not header and await proc.wait() == 0:
+                            break
+                        if header != b"P6\n":
+                            raise ValueError("FFmpeg did not produce a preview frame")
+                        width, height = map(int, (await stream.readline()).split())
+                        if await stream.readline() != b"255\n":
+                            raise ValueError("Unexpected preview pixel format")
+                        data = await stream.readexactly(width * height * 3)
+                        if frame == first:
+                            anchor = monotonic()
+                        delay = anchor + (frame - first) / self.fps - monotonic()
+                        if frame != end - 1 and delay < -1 / self.fps:
+                            continue
+                        await asyncio.sleep(max(0, delay))
+                        self.frame = frame
+                        self.preview.image = Image.frombytes("RGB", (width, height), data)
+                        self.update_status()
+                finally:
+                    if proc.returncode is None:
+                        proc.kill()
+                    await proc.communicate()
+                if not self.playing or end == self.frame_count or self.frame != end - 1:
                     break
-                self.frame = self.frame_at(elapsed)
-        except UnidentifiedImageError as exc:
-            # likely not last frame
-            if "cannot identify image file" not in str(exc):
-                self.notify(str(exc), title="Preview failed", severity="error")
-        except (OSError, ValueError) as exc:
-            raise
+                self.frame = end
+        except (OSError, ValueError, asyncio.IncompleteReadError) as exc:
             self.notify(str(exc), title="Preview failed", severity="error")
         self.playing = False
         self.update_status()
