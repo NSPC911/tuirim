@@ -169,21 +169,21 @@ class ExportProgress(ModalScreen):
 class Timeline(Static):
     def on_click(self, event: events.Click) -> None:
         app = cast("App", self.app)
-        app.seek_time(app.duration * event.x / max(1, self.size.width - 1))
+        app.seek_time(app.start + app.duration * event.x / max(1, self.size.width - 1))
 
     def render(self) -> Text:
         app = cast("App", self.app)
         width = self.size.width
         scale = max(1, width - 1) / (app.duration or 1)
-        cursor = round(app.frame_time(app.frame) * scale)
-        boundaries = {round(app.frame_time(i) * scale) for i in app.cuts[1:]}
+        cursor = round(app.elapsed_time(app.frame) * scale)
+        boundaries = {round(app.elapsed_time(i) * scale) for i in app.cuts[1:]}
         bar = Text(no_wrap=True)
         for x in range(width):
-            frame = app.frame_at(x / scale)
+            frame = app.frame_at(app.start + x / scale)
             ignored = app.section(frame) in app.ignored
             glyph = "╌" if ignored else "━"
             bar.append(
-                "◆" if x == cursor else "│" if x in boundaries else glyph,
+                "◈" if x == cursor else "│" if x in boundaries else glyph,
                 "bold white" if x == cursor else "dim red" if ignored else "green",
             )
         return bar
@@ -251,6 +251,7 @@ class App(DrivenApp):
         else:
             raise ValueError("No usable video frame rate")
         origin = float(info["format"].get("start_time", 0))
+        self.origin = origin
         self.start = float(video.get("start_time", origin)) - origin
         self.regular_rate = video.get("avg_frame_rate") == video.get("r_frame_rate")
         self.frame_count = int(video.get("nb_frames", 0))
@@ -263,7 +264,7 @@ class App(DrivenApp):
             if length <= 0:
                 raise ValueError("No usable video frame count or duration")
             self.frame_count = max(1, round(length * self.fps))
-        self.duration = self.frame_time(self.frame_count)
+        self.duration = self.elapsed_time(self.frame_count)
         self.cuts = [0]
         self.ignored: set[int] = set()
         self.frame = 0
@@ -279,8 +280,11 @@ class App(DrivenApp):
     def on_mount(self) -> None:
         self.seek(0)
 
+    def elapsed_time(self, frame: int) -> float:
+        return frame / self.fps
+
     def frame_time(self, frame: int) -> float:
-        return self.start + frame / self.fps
+        return self.start + self.elapsed_time(frame)
 
     def frame_at(self, seconds: float) -> int:
         frame = round((seconds - self.start) * self.fps)
@@ -295,7 +299,7 @@ class App(DrivenApp):
         state = "IGNORE" if self.section(self.frame) in self.ignored else "KEEP"
         self.query_one(Timeline).refresh()
         self.query_one("#status", Static).update(
-            f"{'Playing' if self.playing else 'Paused'}  {self.frame_time(self.frame):.3f}s / "
+            f"{'Playing' if self.playing else 'Paused'}  {self.elapsed_time(self.frame):.3f}s / "
             f"{self.duration:.3f}s   Frame {self.frame + 1}/{self.frame_count}   {state}     {self.source.name} → {self.output.name}"
         )
 
