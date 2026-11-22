@@ -1,0 +1,125 @@
+name: Build with Nuitka
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  starting-build:
+    runs-on: ubuntu-slim
+    name: Check whether to start
+    steps:
+      - name: Notify Discord - Nuitka Build Starting
+        uses: sarisia/actions-status-discord@v1.13.0
+        with:
+          webhook: ${{ secrets.LOG_HOOK }}
+          title: tuirim nuitka builds starting!
+          color: 0xFFFF00
+          description: |
+            Nuitka Build started on `${{ github.ref_name }}`
+            -# due to `${{ github.event_name }}` by ${{ github.actor }}
+            -# watch changes at [NSPC911/tuirim/actions](https://github.com/NSPC911/tuirim/actions/runs/${{ github.run_id }})
+          avatar_url: "https://avatars.githubusercontent.com/u/176916861?v=4"
+          username: "NSPBot911"
+          nodetail: true
+          notimestamp: true
+          noprefix: true
+
+  build-nuitka:
+    needs: starting-build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows-x64
+            executable: tuirim.exe
+          - os: windows-11-arm
+            name: windows-arm
+            executable: tuirim.exe
+          - os: ubuntu-24.04
+            name: linux-x64
+            executable: tuirim
+          - os: ubuntu-24.04-arm
+            name: linux-arm64
+            executable: tuirim
+          - os: macos-15
+            name: macos-arm64
+            executable: tuirim
+          - os: macos-15-intel
+            name: macos-x64
+            executable: tuirim
+    runs-on: ${{ matrix.os }}
+    name: Nuitka Build (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57
+        with:
+          activate-environment: true
+          python-version: "3.14"
+
+      - name: Build with Nuitka
+        shell: pwsh
+        run: |
+          uv sync --no-dev --group build
+          uv run --no-sync poe build onefile --lto yes
+
+      - name: Upload Executable
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ matrix.executable }}
+          name: tuirim-${{ matrix.name }}-nuitka
+          retention-days: 30
+
+      - name: Rename Report
+        shell: pwsh
+        run: Move-Item report.xml 'tuirim-${{ matrix.name }}-report.xml'
+
+      - name: Upload Build Report
+        uses: actions/upload-artifact@v7
+        with:
+          path: tuirim-${{ matrix.name }}-report.xml
+          retention-days: 30
+          archive: false
+
+      - name: Alert if fail
+        if: failure()
+        uses: sarisia/actions-status-discord@v1.13.0
+        with:
+          webhook: ${{ secrets.LOG_HOOK }}
+          title: tuirim nuitka build failed on ${{ matrix.name }}!
+          status: failure
+          description: "Check the workflow [details](https://github.com/NSPC911/tuirim/actions/runs/${{ github.run_id }}) for more info."
+          avatar_url: "https://avatars.githubusercontent.com/u/176916861?v=4"
+          username: "NSPBot911"
+          nodetail: true
+          notimestamp: true
+          noprefix: true
+
+  notify-nuitka-completion:
+    needs: build-nuitka
+    runs-on: ubuntu-slim
+    name: Notify Nuitka Completion
+    steps:
+      - name: Notify Discord - Nuitka Complete
+        uses: sarisia/actions-status-discord@v1.13.0
+        with:
+          webhook: ${{ secrets.LOG_HOOK }}
+          title: tuirim nuitka builds complete!
+          status: ${{ job.status }}
+          description: |
+            Download artifacts:
+            - [windows-x64](https://nightly.link/NSPC911/tuirim/actions/runs/${{ github.run_id }}/tuirim-windows-x64-nuitka.zip)
+            - [windows-arm](https://nightly.link/NSPC911/tuirim/actions/runs/${{ github.run_id }}/tuirim-windows-arm-nuitka.zip)
+            - [linux-x64](https://nightly.link/NSPC911/tuirim/actions/runs/${{ github.run_id }}/tuirim-linux-x64-nuitka.zip)
+            - [linux-arm64](https://nightly.link/NSPC911/tuirim/actions/runs/${{ github.run_id }}/tuirim-linux-arm64-nuitka.zip)
+            - [macos-arm64](https://nightly.link/NSPC911/tuirim/actions/runs/${{ github.run_id }}/tuirim-macos-arm64-nuitka.zip)
+            - [macos-x64](https://nightly.link/NSPC911/tuirim/actions/runs/${{ github.run_id }}/tuirim-macos-x64-nuitka.zip)
+          avatar_url: "https://avatars.githubusercontent.com/u/176916861?v=4"
+          username: "NSPBot911"
+          nodetail: true
+          notimestamp: true
+          noprefix: true
+
