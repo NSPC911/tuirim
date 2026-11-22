@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import subprocess
 from bisect import bisect_right, insort
 from collections.abc import Callable
@@ -62,6 +63,26 @@ async def run_media(*args: str, on_frame: Callable[[int], None] | None = None) -
     if proc.returncode:
         raise ValueError(error.decode(errors="replace").strip())
     return data
+
+
+class PreviewClock:
+    def __init__(self, start: float) -> None:
+        self.anchor = monotonic() - start
+        self.ready = asyncio.Event()
+
+    async def follow(self, stream: asyncio.StreamReader, origin: float) -> None:
+        # FFplay emits a carriage-return-delimited status with the master clock.
+        try:
+            while True:
+                record = await stream.readuntil(b"\r")
+                match = re.search(rb"(?:^|\s)(-?\d+\.\d+)\s+M-A:", record)
+                if match:
+                    self.anchor = monotonic() - (float(match[1]) - origin)
+                    self.ready.set()
+        except asyncio.IncompleteReadError:
+            pass
+        finally:
+            self.ready.set()
 
 
 class ModalInput(ModalScreen[str]):
@@ -353,6 +374,7 @@ class App(DrivenApp):
 
     @work(exclusive=True, group="preview")
     async def render_preview(self) -> None:
+        play_audio = self.playing and self.audio
         try:
             while True:
                 if self.playing and self.section(self.frame) in self.ignored:
@@ -390,7 +412,12 @@ class App(DrivenApp):
                     "-frames:v",
                     str(end - first),
                     "-vf",
-                    "scale=640:360:force_original_aspect_ratio=decrease",
+                    (
+                        f"fps={self.fps}:start_time=0,"
+                        if self.playing and not self.regular_rate
+                        else ""
+                    )
+                    + "scale=640:360:force_original_aspect_ratio=decrease",
                     "-f",
                     "image2pipe",
                     "-c:v",
@@ -401,6 +428,10 @@ class App(DrivenApp):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
+                player = None
+                clock_task = None
+                start = self.frame_time(first)
+                clock = PreviewClock(start)
                 try:
                     stream = proc.stdout
                     assert stream is not None
@@ -415,15 +446,62 @@ class App(DrivenApp):
                             raise ValueError("Unexpected preview pixel format")
                         data = await stream.readexactly(width * height * 3)
                         if frame == first:
-                            anchor = monotonic()
-                        delay = anchor + (frame - first) / self.fps - monotonic()
+                            clock.anchor = monotonic() - start
+                            if play_audio:
+                                try:
+                                    player = await asyncio.create_subprocess_exec(
+                                        "ffplay",
+                                        "-nodisp",
+                                        "-vn",
+                                        "-autoexit",
+                                        "-stats",
+                                        "-sync",
+                                        "audio",
+                                        "-hide_banner",
+                                        "-ss",
+                                        str(max(0, self.frame_time(first))),
+                                        "-af",
+                                        f"atrim=start={self.origin + start}:end={self.origin + self.frame_time(end)}",
+                                        "-t",
+                                        str((end - first) / self.fps),
+                                        str(self.source),
+                                        stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.DEVNULL,
+                                        stderr=asyncio.subprocess.PIPE,
+                                    )
+                                    assert player.stderr is not None
+                                    clock_task = asyncio.create_task(
+                                        clock.follow(player.stderr, self.origin)
+                                    )
+                                    try:
+                                        await asyncio.wait_for(clock.ready.wait(), 2)
+                                    except TimeoutError:
+                                        clock.anchor = monotonic() - start
+                                except OSError as exc:
+                                    play_audio = False
+                                    self.notify(
+                                        str(exc),
+                                        title="Preview audio unavailable",
+                                        severity="warning",
+                                    )
+                        delay = clock.anchor + self.frame_time(frame) - monotonic()
                         if frame != end - 1 and delay < -1 / self.fps:
                             continue
                         await asyncio.sleep(max(0, delay))
                         self.frame = frame
                         self.preview.image = Image.frombytes("RGB", (width, height), data)
                         self.update_status()
+                    if player is not None and self.frame == end - 1:
+                        await asyncio.sleep(
+                            max(0, clock.anchor + self.frame_time(end) - monotonic())
+                        )
                 finally:
+                    if player is not None:
+                        if player.returncode is None:
+                            player.kill()
+                        await player.wait()
+                    if clock_task is not None:
+                        await clock_task
                     if proc.returncode is None:
                         proc.kill()
                     await proc.communicate()
