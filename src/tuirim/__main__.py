@@ -41,6 +41,7 @@ def main() -> None:
     args = parser.parse_args()
     try:
         from tuirim.main_app import App
+
         App(args.video, args.output or args.video.with_suffix(".trimmed.mp4")).run()
     except (ValueError, OSError, subprocess.CalledProcessError) as exc:
         parser.exit(1, f"{exc}\n")

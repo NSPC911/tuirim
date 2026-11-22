@@ -12,4 +12,3 @@ class NuitkaPluginBytecodeAll(NuitkaPluginBase):
         if name.startswith("__") or name.endswith(("-preLoad", "-postLoad")):
             return None
         return "bytecode"  # ty: ignore
-
