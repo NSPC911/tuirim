@@ -1,0 +1,74 @@
+Input {
+  scrollbar-size: 0 0;
+  background: transparent !important;
+  width: 1fr;
+  border: none !important;
+  border-top: round $primary !important;
+  height: 2 !important;
+
+  .input--placeholder { color: $foreground-darken-1 }
+  &:ansi {
+    .input--cursor { color: $primary }
+    .input--selection {
+      background: $secondary-darken-3;
+      text-style: bold;
+    }
+  }
+}
+
+ModalInput {
+  align: center middle;
+  #modalInput_group {
+    border: round $primary;
+    width: 50vw;
+    max-height: 50vh;
+    background: transparent !important;
+    border-title-align: left;
+    border-subtitle-align: right;
+  }
+}
+
+ExportProgress {
+  align: center middle;
+  #holder {
+    width: 50%;
+    height: 50%;
+    padding: 0;
+    background: $surface;
+    border: round $accent;
+  }
+  ProgressBar { margin: 0 2 }
+  #viewport { border: none !important }
+}
+
+#viewport {
+  height: 1fr;
+  align: center middle;
+  border: round $primary;
+  #preview {
+    width: auto;
+    height: auto;
+  }
+}
+
+#footerKinda {
+  height: 5;
+  border: round $primary;
+  padding: 0 1;
+  max-width: 175;
+}
+
+Timeline {
+  height: 1;
+  padding: 0 0;
+}
+
+#progress { margin: 0 1 }
+
+FooterKey, FooterKey .footer-key--key {
+  color: $secondary !important;
+}
+
+ProgressBar { width: 100% }
+ProgressBar > Bar { width: 1fr }
+Rule { margin-bottom: 0 }

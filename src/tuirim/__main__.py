@@ -8,7 +8,6 @@
 # nuitka-project: --nofollow-import-to=pydoc
 # nuitka-project: --nofollow-import-to=pygments
 # nuitka-project: --nofollow-import-to=tarfile
-# nuitka-project: --nofollow-import-to=zipfile
 # nuitka-project: --onefile-cache-mode=cached
 # nuitka-project: --onefile-child-grace-time=1
 # nuitka-project: --python-flag=no_asserts
@@ -17,6 +16,7 @@
 # nuitka-project: --python-flag=safe_path
 # nuitka-project: --python-flag=static_hashes
 # nuitka-project: --warn-unusual-code
+# nuitka-project: --include-data-file=src/tuirim/style.tcss=_tuirim/style.tcss
 
 # nuitka-project-if: {OS} in ("MACOS"):
 #    nuitka-project: --macos-app-console-mode=force
@@ -43,8 +43,8 @@ def main() -> None:
         from tuirim.main_app import App
 
         App(args.video, args.output or args.video.with_suffix(".trimmed.mp4")).run()
-    except (ValueError, OSError, subprocess.CalledProcessError) as exc:
-        parser.exit(1, f"{exc}\n")
+    except ValueError, OSError, subprocess.CalledProcessError:
+        parser.exit(1)
 
 
 if __name__ == "__main__":

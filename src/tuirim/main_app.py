@@ -5,6 +5,8 @@ import subprocess
 from bisect import bisect_right, insort
 from collections.abc import Callable
 from fractions import Fraction
+from importlib import resources
+from importlib.util import find_spec
 from itertools import pairwise
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -16,7 +18,7 @@ from rich.text import Text
 from textual import events, work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container
+from textual.containers import Center, Container
 from textual.renderables.bar import Bar as BarRenderable
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Input, ProgressBar, Rule, Static
@@ -32,6 +34,30 @@ class ThickBar(BarRenderable):
     HALF_BAR_LEFT = "▐"
     BAR = "█"
     HALF_BAR_RIGHT = "▌"
+
+
+def format_ytes(size: float) -> str:
+    for unit in ["", "K", "M", "G", "T", "P"]:
+        if size < 1024:
+            return f"{size:.2f} {unit}"
+        size /= 1024
+    return f"{size:.2f} E"
+
+
+def ft(seconds: float) -> str:
+    total_seconds = int(seconds)
+    milliseconds = round((seconds - total_seconds) * 100)
+
+    if milliseconds == 100:
+        total_seconds += 1
+        milliseconds = 0
+
+    minutes, sec = divmod(total_seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{sec:02d}.{milliseconds:02d}"
+    return f"{minutes:02d}:{sec:02d}.{milliseconds:02d}"
 
 
 async def run_media(*args: str, on_frame: Callable[[int], None] | None = None) -> bytes:
@@ -86,35 +112,6 @@ class PreviewClock:
 
 
 class ModalInput(ModalScreen[str]):
-    DEFAULT_CSS = """
-    #modalInput_group {
-        border: round $primary;
-        width: 50vw;
-        max-height: 50vh;
-        background: transparent !important;
-        border-title-align: left;
-        border-subtitle-align: right;
-    }
-    Input {
-        scrollbar-size: 0 0;
-        background: transparent !important;
-        width: 1fr;
-        border: none !important;
-        border-top: round $primary !important;
-        height: 2 !important;
-
-        .input--placeholder { color: $foreground-darken-1 }
-        &:ansi {
-            .input--cursor { color: $primary }
-            .input--selection {
-                background: $secondary-darken-3;
-                text-style: bold;
-            }
-        }
-    }
-    ModalInput { align: center middle }
-    """
-
     def __init__(
         self, placeholder: str = "", title: str = "", subtitle: str = ""
     ) -> None:
@@ -152,15 +149,6 @@ class ModalInput(ModalScreen[str]):
 
 
 class ExportProgress(ModalScreen):
-    DEFAULT_CSS = """
-    ExportProgress { align: center middle; }
-    #holder {
-        width: 50%; height: 50%; padding: 0;
-        background: $surface; border: round $accent;
-    }
-    ProgressBar { margin: 0 2 }
-    """
-
     def __init__(self, filename: str, frames: int) -> None:
         super().__init__()
         self.filename = filename
@@ -188,9 +176,26 @@ class ExportProgress(ModalScreen):
 
 
 class Timeline(Static):
-    def on_click(self, event: events.Click) -> None:
+    # def on_click(self, event: events.Click) -> None:
+    #     app = cast("App", self.app)
+    #     app.seek_time(app.start + app.duration * event.x / max(1, self.size.width - 1))
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        self.capture_mouse()
         app = cast("App", self.app)
         app.seek_time(app.start + app.duration * event.x / max(1, self.size.width - 1))
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        # app = cast("App", self.app)
+        # app.seek_time(app.start + app.duration * event.x / max(1, self.size.width - 1))
+        self.release_mouse()
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        if self.app.mouse_captured == self:
+            app = cast("App", self.app)
+            app.seek_time(
+                app.start + app.duration * event.x / max(1, self.size.width - 1)
+            )
 
     def render(self) -> Text:
         app = cast("App", self.app)
@@ -203,64 +208,72 @@ class Timeline(Static):
             frame = app.frame_at(app.start + x / scale)
             ignored = app.section(frame) in app.ignored
             glyph = "╌" if ignored else "━"
-            bar.append(
-                "◈" if x == cursor else "│" if x in boundaries else glyph,
-                "bold white" if x == cursor else "dim red" if ignored else "green",
-            )
+            item: tuple[str, str] | None
+            if x == cursor:
+                item = ("◈", "bold white")
+            elif x in boundaries:
+                section = lambda sect: app.section(
+                    app.frame_at(app.start + (sect) / scale)
+                )
+                left = section(x - 1) in app.ignored
+                right = section(x + 1) in app.ignored
+                if left and right:
+                    item = ("┇", app.theme_variables["error"][5:])
+                else:
+                    item = ("┃", app.theme_variables["secondary"][5:])
+            else:
+                item = (
+                    glyph,
+                    "dim " + app.theme_variables["error"][5:]
+                    if ignored
+                    else app.theme_variables["secondary"][5:],
+                )
+            bar.append(*item)
         return bar
 
 
 class App(DrivenApp):
     ALLOW_SELECT = False
 
-    CSS = """
-    #viewport { height: 1fr; align: center middle; }
-    #preview { width: auto; height: auto; }
-    Timeline { height: 1; }
-    #status { border: round $accent; border-top: none }
-    FooterKey, FooterKey .footer-key--key { color: $primary !important }
-    ProgressBar { width: 100%; }
-    ProgressBar > Bar { width: 1fr; }
-    Rule { margin-bottom: 0 }
-    """
+    CSS_PATH = (
+        resources.files("_tuirim" if find_spec("_tuirim") else "tuirim") / "style.tcss"
+    )
+
     BINDINGS = [
-        Binding("space", "play", "Play/pause"),
+        Binding("space", "play", "Play"),
+        Binding("space", "pause", "Pause"),
         Binding("s", "split", "Split"),
         Binding("c", "clear_splits", "Clear splits"),
-        Binding("i", "ignore", "Ignore/keep"),
+        Binding("i", "hide", "hide"),
+        Binding("i", "keep", "keep"),
         Binding("r", "invert", "Invert"),
-        Binding("comma", "step(-1)", "-1 frame"),
-        Binding("full_stop", "step(1)", "+1 frame"),
-        Binding("less_than_sign", "jump(-1)", "−1s"),
-        Binding("greater_than_sign", "jump(1)", "+1s"),
-        Binding("h", "jump(-10)", "−10s"),
-        Binding("l", "jump(10)", "+10s"),
-        Binding("H", "jump(-60)", "−1m"),
-        Binding("L", "jump(60)", "+1m"),
+        Binding("comma", "step(-1)", group=Binding.Group("± 1f")),
+        Binding("full_stop", "step(1)", group=Binding.Group("± 1f")),
+        Binding("less_than_sign", "jump(-1)", group=Binding.Group("±1s")),
+        Binding("greater_than_sign", "jump(1)", group=Binding.Group("±1s")),
+        Binding("h", "jump(-10)", "−10s", group=Binding.Group("±10s")),
+        Binding("l", "jump(10)", "+10s", group=Binding.Group("±10s")),
+        Binding("H", "jump(-60)", "−1m", group=Binding.Group("±60s")),
+        Binding("L", "jump(60)", "+1m", group=Binding.Group("±60s")),
         Binding("e", "export", "Export"),
         Binding("q", "quit", "Quit"),
     ]
     ENABLE_COMMAND_PALETTE = False
 
     def __init__(self, source: Path, output: Path) -> None:
-        super().__init__()
+        super().__init__(watch_css=True)
         self.theme = "ansi-dark"
         self.source, self.output = source.resolve(), output.resolve()
-        probe = subprocess.check_output([
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_streams",
-            "-show_format",
-            "-of",
-            "json",
-            str(self.source),
-        ])
+        probe = subprocess.check_output(
+            ["ffprobe", "-v", "error", "-show_streams"]
+            + ["-show_format", "-of", "json", str(self.source)]
+        )
         info = json.loads(probe)
         streams = info["streams"]
         video = next((s for s in streams if s["codec_type"] == "video"), None)
         if video is None:
             raise ValueError("No video stream")
+        self.video = video
         self.audio = any(s["codec_type"] == "audio" for s in streams)
         for key in ("avg_frame_rate", "r_frame_rate"):
             try:
@@ -294,12 +307,24 @@ class App(DrivenApp):
 
     def compose(self) -> ComposeResult:
         yield Container(self.preview, id="viewport")
-        yield Timeline()
-        yield Static(id="status")
+        with Center(), (s := Container(id="footerKinda")):
+            yield Static(
+                f" [dim]Codec[/] {self.video['codec_name']}  -  [dim]Avg FPS[/] "
+                + str(round(Fraction(self.video["avg_frame_rate"])))
+                + f"  -  [dim]Resolution[/] {self.video['width']}x{self.video['height']}"
+                + f"  -  [dim]Size[/] {format_ytes(self.source.stat().st_size)}B"
+                + f"  -  [dim]Bitrate[/] {format_ytes(float(self.video.get('bit_rate', 0)))}bps",
+                id="stats",
+            )
+            s.border_title = f"{self.source.name} → {self.output.name}"
+            yield Timeline()
+            yield Static(id="progress")
         yield Footer()
 
     def on_mount(self) -> None:
         self.seek(0)
+        self.screen.BINDINGS = []
+        self.call_later(self.query_one(Footer).recompose)
 
     def elapsed_time(self, frame: int) -> float:
         return frame / self.fps
@@ -316,18 +341,18 @@ class App(DrivenApp):
     def section(self, frame: int) -> int:
         return self.cuts[bisect_right(self.cuts, frame) - 1]
 
-    def update_status(self) -> None:
-        state = "IGNORE" if self.section(self.frame) in self.ignored else "KEEP"
+    def update_progress(self) -> None:
+        state = "HIDE" if self.section(self.frame) in self.ignored else "KEEP"
         self.query_one(Timeline).refresh()
-        self.query_one("#status", Static).update(
-            f"{'Playing' if self.playing else 'Paused'}  {self.elapsed_time(self.frame):.3f}s / "
-            f"{self.duration:.3f}s   Frame {self.frame + 1}/{self.frame_count}   {state}     {self.source.name} → {self.output.name}"
+        self.query_one("#progress", Static).update(
+            f"{'\u25b6' if self.playing else '\u23f8'}  {ft(self.elapsed_time(self.frame))} / "
+            f"{ft(self.duration)}   Frame {self.frame + 1}/{self.frame_count}   {state}"
         )
 
     def seek(self, frame: int) -> None:
         self.playing = False
         self.frame = min(max(frame, 0), self.frame_count - 1)
-        self.update_status()
+        self.update_progress()
         self.render_preview()
 
     def seek_time(self, seconds: float) -> None:
@@ -345,14 +370,19 @@ class App(DrivenApp):
             if self.section(self.frame) in self.ignored:
                 self.ignored.add(self.frame)
             insort(self.cuts, self.frame)
-            self.update_status()
+            self.update_progress()
 
     def action_clear_splits(self) -> None:
         self.cuts = [0]
         self.ignored.clear()
         self.seek(self.frame)
 
-    def action_ignore(self) -> None:
+    # in essence, they do the same thing, im lazy to change
+    def action_hide(self) -> None:
+        self.ignored.symmetric_difference_update({self.section(self.frame)})
+        self.seek(self.frame)
+
+    def action_keep(self) -> None:
         self.ignored.symmetric_difference_update({self.section(self.frame)})
         self.seek(self.frame)
 
@@ -361,9 +391,6 @@ class App(DrivenApp):
         self.seek(self.frame)
 
     def action_play(self) -> None:
-        if self.playing:
-            self.seek(self.frame)
-            return
         if len(self.cuts) == len(self.ignored):
             self.notify("No kept sections to play")
             return
@@ -371,6 +398,22 @@ class App(DrivenApp):
             self.frame = 0
         self.playing = True
         self.render_preview()
+
+    def action_pause(self) -> None:
+        self.seek(self.frame)
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "play":
+            return not self.playing
+        if action == "pause":
+            return self.playing
+        if action == "clear_splits":
+            return len(self.cuts) > 1
+        if action == "ignore":
+            return self.section(self.frame) not in self.ignored
+        if action == "keep":
+            return self.section(self.frame) in self.ignored
+        return super().check_action(action, parameters)
 
     @work(exclusive=True, group="preview")
     async def render_preview(self) -> None:
@@ -490,7 +533,7 @@ class App(DrivenApp):
                         await asyncio.sleep(max(0, delay))
                         self.frame = frame
                         self.preview.image = Image.frombytes("RGB", (width, height), data)
-                        self.update_status()
+                        self.update_progress()
                     if player is not None and self.frame == end - 1:
                         await asyncio.sleep(
                             max(0, clock.anchor + self.frame_time(end) - monotonic())
@@ -511,7 +554,7 @@ class App(DrivenApp):
         except (OSError, ValueError, asyncio.IncompleteReadError) as exc:
             self.notify(str(exc), title="Preview failed", severity="error")
         self.playing = False
-        self.update_status()
+        self.update_progress()
 
     @work(group="export")
     async def action_export(self) -> None:
@@ -568,7 +611,7 @@ class App(DrivenApp):
         self.exporting = True
         self.playing = False
         self.workers.cancel_group(self, "preview")
-        self.update_status()
+        self.update_progress()
         modal = ExportProgress(self.output.name, kept_frames)
         temporary = None
         try:
@@ -610,3 +653,6 @@ class App(DrivenApp):
             if self.screen is modal:
                 await modal.dismiss()
             self.refresh()
+
+    async def on_key(self) -> None:
+        self.call_later(self.refresh_bindings)
