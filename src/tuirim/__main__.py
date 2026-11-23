@@ -4,13 +4,11 @@
 # nuitka-project: --nofollow-import-to="tkinter"
 # nuitka-project: --nofollow-import-to=PIL.AvifImagePlugin
 # nuitka-project: --nofollow-import-to=aiohttp
-# nuitka-project: --nofollow-import-to=http
 # nuitka-project: --nofollow-import-to=markdown_it
 # nuitka-project: --nofollow-import-to=pydoc
 # nuitka-project: --nofollow-import-to=pygments
 # nuitka-project: --nofollow-import-to=tarfile
 # nuitka-project: --nofollow-import-to=zipfile
-# nuitka-project: --nofollow-import-to=urllib
 # nuitka-project: --onefile-cache-mode=cached
 # nuitka-project: --onefile-child-grace-time=1
 # nuitka-project: --python-flag=no_asserts
